@@ -1,0 +1,134 @@
+---
+title: "expedia"
+author: "Jessica ZHOU"
+date: "1 June 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```
+library(sqldf)
+library(ggplot2)
+library(stargazer)
+
+
+setwd("~/Desktop/Expedia Dataset")
+data <- read.csv("new clean data 8192.csv")
+nrow(data)
+str(data)
+summary(data)
+
+data$click_bool <- as.double(data$click_bool)
+data$booking_bool <- as.double(data$booking_bool)
+
+smallpart <- sqldf("SELECT *
+                    FROM data
+                    WHERE srch_id <= 10 and srch_id >=1
+                    ORDER BY srch_id, position ASC")
+# count search ID numbers 399344
+idnumber <- sqldf("SELECT COUNT(DISTINCT(srch_id))
+                   FROM data")
+idnumber
+
+sum(data$booking_bool) # 276593 bookings
+
+#number of searched destinations 23715
+length(unique(data[,"srch_destination_id"])) 
+
+
+#position and click relationship
+
+clickposition <- sqldf("SELECT position, random_bool, SUM(click_bool), COUNT(*), SUM(click_bool)/COUNT(*) AS CTR
+                        FROM data
+                        GROUP BY position, random_bool")
+write.csv(clickposition, "clickposition.csv")
+clickposition$random_bool <- as.factor(clickposition$random_bool)
+ggplot(clickposition, aes(x = position, y = CTR, group = random_bool)) + geom_point(aes(shape = random_bool, colour = random_bool)) +geom_smooth(aes(shape = random_bool, colour = random_bool))+ ggtitle("Click Through Rate (CTR) of various position list") + labs(x = "rank")
+
+#book rate conditional on a click
+bookposition <- sqldf("SELECT position, random_bool,SUM(booking_bool) ,COUNT(*),SUM(booking_bool)/COUNT(*) AS conversionrate
+                       FROM data
+                       WHERE click_bool == 1
+                       GROUP BY position, random_bool")
+write.csv(bookposition, "bookposition.csv")
+bookposition$random_bool <- as.factor(bookposition$random_bool)
+ggplot(bookposition, aes(x = position, y = conversionrate, group = random_bool)) + geom_point(aes(shape = random_bool, colour = random_bool))+geom_smooth(aes(shape = random_bool, colour = random_bool)) + ggtitle("Conversion rate conditional on a click of different position") + labs(x = "rank")
+
+
+#book rate unconditional on a click
+bookpositionun <- sqldf("SELECT position, random_bool, SUM(booking_bool)/COUNT(*) AS conversionrate
+                       FROM data
+                       GROUP BY position, random_bool")
+bookpositionun$random_bool <- as.factor(bookpositionun$random_bool)
+ggplot(bookpositionun, aes(x = position, y = conversionrate, colour = random_bool)) + geom_point(aes(shape = random_bool, colour = random_bool)) + ggtitle("Conversion rate unconditional on a click of different position")
+
+
+```
+
+1. Data cleaning
+First, we look at the summary of each attributes in the dataset. For the "price_used" variable, the minimum is 0 and the maximum is 19726382. Apprantly, it is not reasonable. So first we filter the dataset with "price_used" between 10 and 1000.
+
+```{r}
+data_clean <- data[data[,"price_usd"] <=1000 & data[,"price_usd"] >= 10,]
+nrow(data_clean) #9884661
+
+destination <- sqldf("SELECT srch_destination_id, COUNT(DISTINCT(srch_id)) AS number
+                      FROM data_clean
+                      GROUP BY srch_destination_id
+                      ORDER BY number DESC
+                      LIMIT 20")
+write.csv(estination, "destination.csv")
+print(destination[1:10,])
+str(data_clean)
+data_clean$prop_review_score <- as.numeric(data_clean$prop_review_score)
+
+
+```
+
+```{r}
+dest8192 <- data_clean[data_clean[,"srch_destination_id"] == 8192,]
+
+
+write.csv(dest8192, "dest8192.csv")
+
+
+# Click  through rate(Regression)
+lmclick <- lm(click_bool ~ prop_starrating + prop_review_score + prop_brand_bool + prop_location_score1 + price_usd + promotion_flag + srch_length_of_stay + srch_booking_window + srch_room_count + srch_saturday_night_bool + position, data_clean[(data_clean[,"srch_id"] < 200000) & (data_clean[,"random_bool"] == 0),])
+summary(lmclick)
+
+lm.8192 <- lm(click_bool ~ prop_starrating + prop_review_score + prop_brand_bool + prop_location_score1 + price_usd + promotion_flag + srch_length_of_stay + srch_booking_window + srch_room_count + srch_saturday_night_bool + position, dest8192[dest8192[,"random_bool"] == 0,])
+summary(lm.8192)
+
+
+stargazer(lm.8192,lmclick, title = "regress CTR on position for normal ranking", column.labels = c("Destination 8192","Destination 4562","Destination 9402","Destination 10979","200,000 searches"), align = TRUE,type = 'text', out = "table.txt")
+
+
+# Book conditional on a click
+lmclick <- lm(booking_bool ~ prop_starrating + prop_review_score + prop_brand_bool + prop_location_score1 + price_usd + promotion_flag + srch_length_of_stay + srch_booking_window + srch_room_count + srch_saturday_night_bool + position, data_clean[(data_clean[,"srch_id"] < 200000) & (data_clean[,"click_bool"] == 1) & (data_clean[,"random_bool"] == 1),])
+summary(lmclick)
+
+
+lm.8192 <- lm(booking_bool ~ prop_starrating + prop_review_score + prop_brand_bool + prop_location_score1 + price_usd + promotion_flag + srch_length_of_stay + srch_booking_window + srch_room_count + srch_saturday_night_bool + position, dest8192[dest8192[,"click_bool"] == 1 & dest8192[,"random_bool"] == 1,])
+summary(lm.8192)
+
+
+stargazer(lm.8192,lmclick, title = "regress CTR on position for random ranking", column.labels = c("Destination 8192", "200,000 searches"), align = TRUE,type = 'text', out = "table.txt")
+
+
+
+
+# Book or not unconditional on a click
+lmclick <- lm(booking_bool ~ prop_starrating + prop_review_score + prop_brand_bool + prop_location_score1 + price_usd + promotion_flag + srch_length_of_stay + srch_booking_window + srch_room_count + srch_saturday_night_bool + position, data_clean[(data_clean[,"srch_id"] < 200000),])
+summary(lmclick)
+
+
+lm.8192 <- lm(booking_bool ~ prop_starrating + prop_review_score + prop_brand_bool + prop_location_score1 + price_usd + promotion_flag + srch_length_of_stay + srch_booking_window + srch_room_count + srch_saturday_night_bool + position, dest8192)
+summary(lm.8192)
+
+
+```
+
